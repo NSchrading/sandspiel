@@ -68,21 +68,40 @@ impl Species {
 
 pub fn update_sand(cell: Cell, mut api: SandApi) {
     let dx = rand_dir_2();
-
-    let nbr = api.get(0, 1);
-    if nbr.species == Species::Empty {
+    let below = api.get(0, 1);
+    let random_adj = api.get(dx, 1);
+    // Fall if there's nothing below the sand
+    if below.species == Species::Empty {
         api.set(0, 0, EMPTY_CELL);
         api.set(0, 1, cell);
-    } else if api.get(dx, 1).species == Species::Empty {
+    // Slide down in a random direction
+    } else if random_adj.species == Species::Empty {
         api.set(0, 0, EMPTY_CELL);
         api.set(dx, 1, cell);
-    } else if nbr.species == Species::Water
-        || nbr.species == Species::Gas
-        || nbr.species == Species::Oil
-        || nbr.species == Species::Acid
+    // Fall in liquids
+    } else if below.species == Species::Water
+        || below.species == Species::Gas
+        || below.species == Species::Oil
+        || below.species == Species::Acid
     {
-        api.set(0, 0, nbr);
-        api.set(0, 1, cell);
+        api.set(0, 0, below);
+        // randomly allow some dispersion to simulate the flow
+        // of the fluid moving around the sand particles
+        if rand_int(4) == 0 {
+            api.set(dx, 1, cell);
+        }
+        else {
+            api.set(0, 1, cell);
+        }
+    // If the sand is at the bottom of water or oil
+    // allow the same sliding in a random direction
+    // behavior, so it doesn't stack up in tall columns
+    } else if random_adj.species == Species::Water
+        || random_adj.species == Species::Oil
+    {
+        api.set(0, 0, random_adj);
+        api.set(dx, 1, cell);
+    // Stay in the same spot
     } else {
         api.set(0, 0, cell);
     }
