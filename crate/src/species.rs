@@ -4,7 +4,6 @@ use SandApi;
 use Wind;
 use EMPTY_CELL;
 
-// use std::cmp;
 use std::mem;
 use wasm_bindgen::prelude::*;
 // use web_sys::console;
@@ -66,18 +65,34 @@ impl Species {
     }
 }
 
+// 1 in x chance for dry sand to soak up water around it
+const WATER_SOAK_CHANCE: i32 = 40;
+// Chance for unsaturated sand to take liquid from saturated sand adjacent to it
+const UNSATURATED_SAND_SIDE_SOAK_CHANCE: i32 = 20;
+// Chance for wet sand to get dry again if there is dry sand or air above it
+const EVAPORATION_CHANCE: i32 = 275;
+// Max number of times a sand cell can soak up water
+const MAX_SATURATION: u8 = 2;
+// Amount of cell lightness that should decrease per saturation level
+const LIGHTNESS_DECREASE_PER_SATURATION: u8 = 65 / MAX_SATURATION;
+// Sand parameters:
+//  ra: lightness level
+//  rb: water saturation (how many cells of water the sand has soaked up)
 pub fn update_sand(cell: Cell, mut api: SandApi) {
     let dx = rand_dir_2();
     let below = api.get(0, 1);
     let random_adj = api.get(dx, 1);
+    let my_new_loc;
     // Fall if there's nothing below the sand
     if below.species == Species::Empty {
         api.set(0, 0, EMPTY_CELL);
-        api.set(0, 1, cell);
+        my_new_loc = (0, 1);
+        api.set(my_new_loc.0, my_new_loc.1, cell);
     // Slide down in a random direction
     } else if random_adj.species == Species::Empty {
         api.set(0, 0, EMPTY_CELL);
-        api.set(dx, 1, cell);
+        my_new_loc = (dx, 1);
+        api.set(my_new_loc.0, my_new_loc.1, cell);
     // Fall in liquids
     } else if below.species == Species::Water
         || below.species == Species::Gas
@@ -85,13 +100,16 @@ pub fn update_sand(cell: Cell, mut api: SandApi) {
         || below.species == Species::Acid
     {
         api.set(0, 0, below);
+
         // randomly allow some dispersion to simulate the flow
         // of the fluid moving around the sand particles
         if rand_int(4) == 0 {
-            api.set(dx, 1, cell);
+            my_new_loc = (dx, 1);
+            api.set(my_new_loc.0, my_new_loc.1, cell);
         }
         else {
-            api.set(0, 1, cell);
+            my_new_loc = (0, 1);
+            api.set(my_new_loc.0, my_new_loc.1, cell);
         }
     // If the sand is at the bottom of water or oil
     // allow the same sliding in a random direction
@@ -100,10 +118,92 @@ pub fn update_sand(cell: Cell, mut api: SandApi) {
         || random_adj.species == Species::Oil
     {
         api.set(0, 0, random_adj);
-        api.set(dx, 1, cell);
+        my_new_loc = (dx, 1);
+        api.set(my_new_loc.0, my_new_loc.1, cell);
     // Stay in the same spot
     } else {
-        api.set(0, 0, cell);
+        my_new_loc = (0, 0);
+        api.set(my_new_loc.0, my_new_loc.1, cell);
+    }
+
+    // Simulate sand soaking up water
+    //
+    // Any water surrounding the current cell
+    let water_neighbor = get_neighbor_cell_coords()
+        .iter()
+        .map(|x| (api.get(x.0, x.1), (x.0, x.1)))
+        .find(|(x, _)| x.species == Species::Water);
+    let above = api.get(0, -1);
+
+    // If there is any water around the current cell and the cell is unsaturated
+    // then soak it up
+    if water_neighbor.is_some() && cell.rb < MAX_SATURATION && rand_int(WATER_SOAK_CHANCE) == 0 {
+        let (_, water_nbr_coords) = water_neighbor.unwrap();
+        api.set(water_nbr_coords.0, water_nbr_coords.1, EMPTY_CELL);
+        api.set(
+            my_new_loc.0,
+            my_new_loc.1,
+            Cell {
+                species: Species::Sand,
+                ra: cell.ra - LIGHTNESS_DECREASE_PER_SATURATION,
+                rb: cell.rb + 1,
+                clock: 0,
+            }
+        );
+    }
+    // If the cell is unsaturated and there are saturated sand cells above or to the side
+    // then allow the cell to take some of the saturation from that neighbor.
+    else if cell.rb < MAX_SATURATION && rand_int(UNSATURATED_SAND_SIDE_SOAK_CHANCE) == 0 {
+        // Vector of cells that can't soak any more water, along with their coordinates
+        let saturated_neighbors: Vec<(Cell, (i32, i32))> = get_top_side_neighbor_cell_coords()
+            .iter()
+            .map(|x| (api.get(x.0, x.1), (x.0, x.1)))
+            .filter(|(x, _)| x.species == Species::Sand && x.rb == MAX_SATURATION)
+            .collect();
+        let num_saturated = saturated_neighbors.len();
+        if num_saturated > 0 {
+            // randomly select one of the saturated cells
+            let num = rand_int(num_saturated as i32) as usize;
+            let (saturated_neighbor, saturated_nbr_coords) = saturated_neighbors[num];
+
+            api.set(
+                my_new_loc.0,
+                my_new_loc.1,
+                Cell {
+                    species: Species::Sand,
+                    ra: cell.ra - LIGHTNESS_DECREASE_PER_SATURATION,
+                    rb: cell.rb + 1,
+                    clock: 0,
+                }
+            );
+            api.set(
+                saturated_nbr_coords.0,
+                saturated_nbr_coords.1,
+                Cell {
+                    species: Species::Sand,
+                    ra: saturated_neighbor.ra + LIGHTNESS_DECREASE_PER_SATURATION,
+                    rb: saturated_neighbor.rb - 1,
+                    clock: 0,
+                }
+            );
+        }
+    }
+    // Over time, wet sand becomes dry again if there's air
+    // or dry sand above it
+    else if (above.species == Species::Empty
+        || (above.species == Species::Sand && above.rb == 0))
+        && cell.rb > 0 && rand_int(EVAPORATION_CHANCE) == 0 
+    {
+        api.set(
+            my_new_loc.0,
+            my_new_loc.1,
+            Cell {
+                species: Species::Sand,
+                ra: cell.ra + 32,
+                rb: cell.rb - 1,
+                clock: 0,
+            }
+        );
     }
 }
 

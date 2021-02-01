@@ -88,6 +88,31 @@ pub fn split_dy_dx(s: u8) -> (i32, i32) {
     (dx, dy)
 }
 
+/// Returns a vector with coordinates for all surrounding cells
+pub fn get_neighbor_cell_coords() -> Vec<(i32, i32)> {
+    vec![
+        (1, 1),
+        (0, 1),
+        (-1, 1),
+        (-1, 0),
+        (1, 0),
+        (0, -1),
+        (-1, -1),
+        (1, -1),
+    ]
+}
+
+/// Returns a vector with coordinates for top and side cells
+pub fn get_top_side_neighbor_cell_coords() -> Vec<(i32, i32)> {
+    vec![
+        (1, -1),
+        (0, -1),
+        (-1, -1),
+        (-1, 0),
+        (1, 0),
+    ]
+}
+
 cfg_if! {
     // When the `console_error_panic_hook` feature is enabled, we can call the
     // `set_panic_hook` function at least once during initialization, and then
